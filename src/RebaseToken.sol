@@ -16,8 +16,8 @@ pragma solidity ^0.8.24;
 
 // Layout of Functions:
 // constructor
-// receive function (if exists)
-// fallback function (if exists)
+// receive() function (if exists)
+// fallback() function (if exists)
 // external
 // public
 // internal
@@ -27,6 +27,7 @@ pragma solidity ^0.8.24;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {AccessControl} from "../lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
+import {IRebaseToken} from "./interfaces/IRebaseToken.sol";
 
 /**
  * @title Rebase Token
@@ -35,7 +36,7 @@ import {AccessControl} from "../lib/openzeppelin-contracts/contracts/access/Acce
  * @notice The interest rate in the smart contract can only decrease
  * Each user will have their own interest rate that is the glboal interest rate at the time of deposit
  */
-contract RebaseToken is ERC20, Ownable, AccessControl {
+contract RebaseToken is ERC20, Ownable, AccessControl, IRebaseToken {
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
     //////////////////////////////////////////////////////////////*/
@@ -104,7 +105,7 @@ contract RebaseToken is ERC20, Ownable, AccessControl {
      * @param _newInterestRate the new interest rate that will be set
      * @dev The interest rate can only decrease
      */
-    function _setInterestRate(uint256 _newInterestRate) external onlyOwner {
+    function setInterestRate(uint256 _newInterestRate) external onlyOwner {
         // this check is because we said we want our interest rate here to only be able to decrease over time
         if (_newInterestRate > s_interestRate) {
             revert RebaseToken__InterestRateCanOnlyDecrease(
