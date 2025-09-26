@@ -52,7 +52,8 @@ contract Vault {
                                  EVENTS
     //////////////////////////////////////////////////////////////*/
 
-    event Vault__Deposit(address indexed user, uint256 indexed amountDeposited);
+    event Deposit(address indexed user, uint256 indexed amountDeposited);
+    event Redeem(address indexed user, uint256 indexed amountDeposited);
 
     /*//////////////////////////////////////////////////////////////
                                MODIFIERS
@@ -104,18 +105,30 @@ contract Vault {
                            External Functions
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Allows users to deposit ETH into the vault and mint rebase tokens in return
+     */
     function deposit() external payable {
         // (1) we need to use the amount of ETH that the user has sent to mint tokens to the user
         // address(this).call{value: msg.value}("");
         i_rebaseToken.mint(msg.sender, msg.value);
-        emit Vault__Deposit(msg.sender, msg.value);
+        emit Deposit(msg.sender, msg.value);
     }
+
+    /**
+     * @notice Allows users to redeem their rebase tokens for ETH
+     * @param _amount The amount of rebase tokens to redeem
+     */
 
     function redeem(uint256 _amount) external {
         // Follows CEI
+        if (_amount == type(uint256).max) {
+            _amount = i_rebaseToken.balanceOf(msg.sender);
+        }
 
         // (1) First, we need to burn the tokens from the user
         i_rebaseToken.burn(msg.sender, _amount);
+
         // (2) We need to send the user ETH
         // we could do payable(msg.sender).transfer(_amount) - however it's not optimal
         // and so we're doing a low-level call:
@@ -124,6 +137,8 @@ contract Vault {
         if (!success) {
             revert Vault_RedeemFailed(msg.sender, _amount);
         }
+
+        emit Redeem(msg.sender, _amount);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -142,6 +157,10 @@ contract Vault {
                            Pure & View Functions
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Get the address of the rebase token
+     * @return rebaseTokenAddress The address of the rebase token
+     */
     function getRebaseTokenAddress()
         external
         view

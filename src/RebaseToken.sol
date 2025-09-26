@@ -146,9 +146,6 @@ contract RebaseToken is ERC20, Ownable, AccessControl, IRebaseToken {
         address _from,
         uint256 _amount
     ) external onlyRole(MINT_AND_BURN_ROLE) {
-        if (_amount == type(uint256).max) {
-            _amount = balanceOf(_from);
-        }
         _mintAccruedInterests(_from);
         _burn(_from, _amount);
     }
@@ -322,7 +319,12 @@ contract RebaseToken is ERC20, Ownable, AccessControl, IRebaseToken {
      */
     function balanceOf(
         address _user
-    ) public view override returns (uint256 balancePlusAccruedInterest) {
+    )
+        public
+        view
+        override(ERC20, IRebaseToken)
+        returns (uint256 balancePlusAccruedInterest)
+    {
         // get the current PRINCIPAL balance: aka the number of tokens that have actually been minted to the user aka the number of tokens that are actually reflected in that balance mapping
         // inside the inherited ERC20, there is a _balance mapping -> and that's the state variable that will keep track of the actual tokens that have been minted to them
         // this new balanceOf() function will return _balance + any interest that has accrued since the last time they performed any action like minting, burning, etc...
@@ -345,5 +347,11 @@ contract RebaseToken is ERC20, Ownable, AccessControl, IRebaseToken {
         address _user
     ) external view returns (uint256 balance) {
         balance = super.balanceOf(_user);
+    }
+
+    function getUserAccumulatedInterestSinceLastUpdate(
+        address _user
+    ) external view returns (uint256 linearInterest) {
+        return _calculateUserAccumulatedInterestSinceLastUpdate(_user);
     }
 }

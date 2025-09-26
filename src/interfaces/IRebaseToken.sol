@@ -26,4 +26,8 @@ interface IRebaseToken {
     function getUserPrincipalBalanceOf(
         address _user
     ) external view returns (uint256 balance);
+
+    function balanceOf(
+        address _user
+    ) external view returns (uint256 balancePlusAccruedInterest);
 }
