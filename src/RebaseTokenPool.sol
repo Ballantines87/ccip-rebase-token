@@ -6,6 +6,10 @@ import {IERC20} from "@ccip/contracts/src/v0.8/vendor/openzeppelin-solidity/v4.8
 import {Pool} from "@ccip/contracts/src/v0.8/ccip/libraries/Pool.sol";
 import {IRebaseToken} from "../src/interfaces/IRebaseToken.sol";
 
+// we are inheriting from TokenPool because it already implements IPoolV1 interface and all the RMN validation logic for us -> so we just need to implement the lockOrBurn and releaseOrMint functions
+// N.B. TokenPool is an abstract contract -> because it has 2 functions that are not implemented (lockOrBurn and releaseOrMint) -> so we need to implement them in our RebaseTokenPool contract
+// N.B. TokenPool already inherits from IERC165 -> which is the interface that allows us to do interface detection (i.e. to check if a contract implements a specific interface or not) -> and this is important because the router needs to be able to check if the pool implements the IPoolV1 interface or not -> so that it can call the lockOrBurn and releaseOrMint functions
+
 contract RebaseTokenPool is TokenPool {
     constructor(
         IERC20 _token,
@@ -28,8 +32,16 @@ contract RebaseTokenPool is TokenPool {
             .getUserInterestRate(receiver);
 
         // now that we got the user's interest rate we can go ahead and burn our tokens
-        // N.B. notice that we do .burn(address(this),...) -> because the way this CCIP works is 1) first the user does a token approval 2) then they send the tokens to CCIP 3) and then the CCIP will send to the Token Pool contract -> So actually it needs to be address(this) because the tokens are sent in the Token Pool contract when it is doing the cross-chain transfers -> which is why, when we do the cross-chain transfers - in our script and in our tests - we will need to approve the router for the amount of tokens that we wanna send cross-chain - hence the Token Pool contract (aka address(this)) is the one that needs to burn them
+        // N.B. notice that we do .burn(address(this),...) -> because the way this CCIP works is 1) first the user does a token approval 2) then they send the tokens to CCIP 3) and then the CCIP will send to the Token Pool contract -> So actually it needs to be address(this) because the tokens are sent in the Token Pool contract when it is doing the cross-chain transfers -> which is why, when we do the cross-chain transfers - in our script and in our tests - we will need to approve the router for the amount of tokens that we wanna send cross-chain - hence the Token Pool contract itself (aka address(this)) is the one that needs to burn them
         IRebaseToken(address(i_token)).burn(address(this), lockOrBurnIn.amount);
+
+        // we finally need to return Pool.LockOrBurnOutV1 struct
+        lockOrBurnOut = Pool.LockOrBurnOutV1({
+            // we just encode the REMOTE token address (NOT the local i_token) into bytes format -> to do that we use a helper function that's already implemented in the TokenPool contract called getRemoteToken()
+            destTokenAddress: getRemoteToken(lockOrBurnIn.remoteChainSelector),
+            // we encode the user's interest rate into bytes format so that we can send it to the destination/remote chain
+            destPoolData: abi.encode(userInterestRate)
+        });
     }
 
     function releaseOrMint(
@@ -37,5 +49,26 @@ contract RebaseTokenPool is TokenPool {
     ) external override returns (Pool.ReleaseOrMintOutV1 memory) {
         // this is called inside the releaseOrMint function -> because this is where the risk management network (RMN) checks happen and all validation occurs, to make sure our cross-chain mesages are secure -> so if this fails, the whole transaction reverts
         _validateReleaseOrMint(releaseOrMintIn);
+
+        // then we need to get the user's interest rate
+        // this is in bytes format -> so we need to decode it
+        uint256 userInterestRate = abi.decode(
+            releaseOrMintIn.sourcePoolData,
+            (uint256)
+        );
+
+        // then we need to set the user's interest rate -> BUT what happens if the user ALREADY has some tokens on this chain? -> we want to make sure that any interest is minted to them BEFORE we go ahead and set their interest rate again.
+
+        IRebaseToken(address(i_token)).mint(
+            releaseOrMintIn.receiver,
+            releaseOrMintIn.amount,
+            userInterestRate
+        );
+
+        // then we return the Pool.ReleaseOrMintOutV1 struct
+        return
+            Pool.ReleaseOrMintOutV1({
+                destinationAmount: releaseOrMintIn.amount
+            });
     }
 }

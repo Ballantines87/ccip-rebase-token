@@ -126,12 +126,13 @@ contract RebaseToken is ERC20, Ownable, AccessControl, IRebaseToken {
 
     function mint(
         address _to,
-        uint256 _amount
+        uint256 _amount,
+        uint256 _userInterestRate
     ) external onlyRole(MINT_AND_BURN_ROLE) {
         // we want to FIRST mint the accrued interests (accrued up to this point and since the last time they performed any actions - minting, burning, transferring...) to the user, so that all of the state is up to date BEFORE they mint any new tokens
         _mintAccruedInterests(_to);
         // sets the interest rate for the user equal to the s_interest rate in the smart contract at the time they call mint()
-        s_userTouserInterestRate[_to] = s_interestRate;
+        s_userTouserInterestRate[_to] = _userInterestRate;
         _mint(_to, _amount);
     }
 
@@ -353,5 +354,9 @@ contract RebaseToken is ERC20, Ownable, AccessControl, IRebaseToken {
         address _user
     ) external view returns (uint256 linearInterest) {
         return _calculateUserAccumulatedInterestSinceLastUpdate(_user);
+    }
+
+    function getInterestRate() external view returns (uint256 interestRate) {
+        return s_interestRate;
     }
 }
