@@ -26,7 +26,7 @@ contract RebaseTokenPool is TokenPool {
 
         // if we need to send some extra data to the destination chain, we can do it here -> and in the case of our rebase token, we need to be able to calculate the amount of tokens and how much interest they are earning -> so we need to calculate the user's interest rate -> and we can use that helpful getUserInterestRate() function that we created in our RebaseToken contract
 
-        address originalSender = lockOrBurnIn.originalSender; // we need to decode the receiver because it's in bytes format - which means that it has been previously encoded via abi.encode() into bytes -> so we call abi.decode() to get the original address back
+        address originalSender = lockOrBurnIn.originalSender;
 
         uint256 userInterestRate = IRebaseToken(address(i_token))
             .getUserInterestRate(originalSender);
@@ -51,7 +51,7 @@ contract RebaseTokenPool is TokenPool {
         _validateReleaseOrMint(releaseOrMintIn);
 
         // then we need to get the user's interest rate (that's the info that was sent cross-chain from the source chain to the destination chain)
-        // this is in bytes format -> so we need to decode it
+        // this is in bytes format -> so we need to decode it because it's in bytes format - which means that it has been previously encoded via abi.encode() into bytes -> so we call abi.decode() to get the original address back
         uint256 userInterestRate = abi.decode(
             releaseOrMintIn.sourcePoolData,
             (uint256)

@@ -3,8 +3,13 @@ src = "src"
 out = "out"
 libs = ["lib"]
 
+# rpc_endpoints allows you to define named RPC endpoints that can be used in scripts and tests
+# the syntax ${NAME} will be replaced with the value of the environment variable NAME (inside .env)
+rpc_endpoints = { sepolia-eth = "${SEPOLIA_RPC_URL}", arb-sepolia = "${ARB_SEPOLIA_RPC_URL}" }
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 remappings = [
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
     "@ccip/=lib/ccip/",
+    "@chainlink/local/=lib/chainlink-local/",
 ]
