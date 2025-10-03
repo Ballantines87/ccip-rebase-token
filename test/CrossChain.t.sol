@@ -10,14 +10,19 @@ import {IERC20} from "@ccip/contracts/src/v0.8/vendor/openzeppelin-solidity/v4.8
 import {RegistryModuleOwnerCustom} from "@ccip/contracts/src/v0.8/ccip/tokenAdminRegistry/RegistryModuleOwnerCustom.sol";
 
 import {TokenAdminRegistry} from "@ccip/contracts/src/v0.8/ccip/tokenAdminRegistry/TokenAdminRegistry.sol";
+import {Register} from "lib/chainlink-local/src/ccip/Register.sol";
 
 import {CCIPLocalSimulatorFork} from "../lib/chainlink-local/src/ccip/CCIPLocalSimulatorFork.sol";
 
 import {TokenPool} from "@ccip/contracts/src/v0.8/ccip/pools/TokenPool.sol";
-import {RateLimiter} from "lib/ccip/contracts/src/v0.8/ccip/libraries/RateLimiter.sol";
+import {RateLimiter} from "@ccip/contracts/src/v0.8/ccip/libraries/RateLimiter.sol";
+import {Client} from "@ccip/contracts/src/v0.8/ccip/libraries/Client.sol";
+
+import {IRouterClient} from "@ccip/contracts/src/v0.8/ccip/interfaces/IRouterClient.sol";
 
 contract CrossChainTest is Test {
     address OWNER = makeAddr("OWNER");
+    address USER = makeAddr("USER");
 
     RebaseToken sepoliaRebaseToken;
     RebaseToken arbSepoliaRebaseToken;
@@ -190,6 +195,7 @@ contract CrossChainTest is Test {
         vm.stopPrank();
     }
 
+    // Helper function to configure the token pools on both chains
     function configureTokenPool(
         uint256 fork,
         address localPool,
@@ -207,7 +213,7 @@ contract CrossChainTest is Test {
         bytes memory remotePoolAddress = abi.encode(remotePool);
         bytes memory remoteTokenAddress = abi.encode(remoteToken);
 
-        //         struct ChainUpdate {
+        // struct ChainUpdate {
         //     uint64 remoteChainSelector; // ──╮ Remote chain selector
         //     bool allowed; // ────────────────╯ Whether the chain should be enabled
         //     bytes remotePoolAddress; //        Address of the remote pool, ABI encoded in the case of a remote EVM chain.
@@ -236,5 +242,129 @@ contract CrossChainTest is Test {
         vm.prank(OWNER);
         // here we need to pass the LOCAL Token Pool
         TokenPool(localPool).applyChainUpdates(chainsToAdd);
+    }
+
+    // the function that will allow us to bridge tokens from sepolia to arbitrum sepolia and vice versa
+    function bridgeTokens(
+        uint256 amountToBridge,
+        uint256 localFork,
+        uint256 remoteFork,
+        Register.NetworkDetails memory localNetworkDetails,
+        Register.NetworkDetails memory remoteNetworkDetails,
+        RebaseToken localToken,
+        RebaseToken remoteToken
+    ) public {
+        // 1) first we select the fork that we're working on
+        vm.selectFork(localFork);
+
+        // 2) we need to create the message to send cross-chain (using Client.EVM2AnyMessage)
+
+        // the array of tokens and their amounts that we're sending cross-chain - used inside Client.EVM2AnyMessage to construct the message
+        Client.EVMTokenAmount[]
+            memory tokenAmounts = new Client.EVMTokenAmount[](1);
+        tokenAmounts[0] = Client.EVMTokenAmount({
+            token: address(localToken), // token address on the local chain.
+            amount: amountToBridge // Amount of tokens.
+        });
+
+        Client.EVM2AnyMessage memory message = Client.EVM2AnyMessage({
+            receiver: abi.encode(USER), // we're sending the tokens to the USER address on the destination chain (we're assuming the address is the same on both chains)
+            data: "", // we're not sending any extra data with this cross-chain transfer in this demo
+            tokenAmounts: tokenAmounts, // the array of tokens and their amounts that we're sending cross-chain
+            feeToken: localNetworkDetails.linkAddress, // we want to pay this in LINK tokens -> so we're going to use localNetworkDetails.linkAddress to get the LINK address
+            extraArgs: Client._argsToBytes(Client.EVMExtraArgsV1({gasLimit: 0})) // Populate this extraArgs with _argsToBytes(EVMExtraArgsV1)
+        });
+
+        // 3) now we can GET the FEES -> so we need to call the router contract -> we can get it from the localNetworkDetails.routerAddress -> but then we need to cast it to the correct interface - which is IRouterClient - so that we can call the getFee() function on it
+
+        IRouterClient router = IRouterClient(localNetworkDetails.routerAddress);
+
+        uint256 fee = router.getFee(
+            remoteNetworkDetails.chainSelector, // The destination chainSelector
+            message // The cross-chain CCIP message (aka Client.EVM2AnyMessage) including data and/or tokens
+        );
+
+        // N.B. we (as the USER) need to have some LINK tokens on the local chain to be able to PAY FOR THE FEES - so we're gonna use requestLinkFromFaucet(...) on our CCIPLocalSimulatorFork contract to request some LINK tokens from the faucet (it's kinda like vm.deal)
+        bool linkTokensSuccessfullySentToUser = ccipLocalSimulatorFork
+            .requestLinkFromFaucet(USER, 100e18); // 100 LINK
+
+        if (!linkTokensSuccessfullySentToUser) {
+            revert("Failed to get LINK tokens from the faucet");
+        }
+
+        // 4) we need (as the USER) to approve the router address to be able to spend the user's LINK tokens - so that it can pay for the fees
+        vm.prank(USER);
+        IERC20(localNetworkDetails.linkAddress).approve(
+            localNetworkDetails.routerAddress,
+            fee
+        );
+
+        // 5) we need (as the USER) to approve the router address to be able to spend the localTokens - so that it can pull the amountToBridge of tokens from the user
+
+        vm.prank(USER);
+        IERC20(address(localToken)).approve(
+            localNetworkDetails.routerAddress,
+            amountToBridge
+        );
+
+        // 6) now we can send the tokens cross-chain by calling the ccipSend() function on the router
+
+        // BUT we also wanna make sure that all of the state is as expected -> so we want to i) get some balances and ii) do some assertions
+
+        // 6.1) We want to get the localToken BALANCE BEFORE we do any cross-chain message ...
+        uint256 localTokenBalanceBeforeBridging = localToken.balanceOf(USER);
+
+        // 6.2) ... and then we send (as the USER) the message cross-chain by calling the ccipSend() function on the router ..
+
+        vm.prank(USER);
+        bytes32 messageId = router.ccipSend{value: fee}(
+            remoteNetworkDetails.chainSelector, // The destination chain ID
+            message // The cross-chain CCIP message including data and/or tokens
+        );
+
+        // 6.3) And we want to get the balance AFTER ...
+        uint256 localTokenBalanceAfterBridging = localToken.balanceOf(USER);
+
+        // ... and verify that's correctly decreased by amountToBridge
+        assertEq(
+            localTokenBalanceAfterBridging,
+            localTokenBalanceBeforeBridging - amountToBridge
+        );
+
+        // 6.4) we get the INTEREST RATE of the user on the LOCAL chain BEFORE the transfer, as we'll later verify that's the SAME as the interest rate on the REMOTE chain AFTER the transfer
+        uint256 userInterestRateOnLocalChain = RebaseToken(localToken)
+            .getUserInterestRate(USER);
+
+        // 7) now, since we're using chainlink-local to PRETEND that we're sending a CROSS-CHAIN message -> we actually need to make sure it propagates (and that's a funny little thing you have to do in the tests, when you're using chainlink-local and you're testing ccip)
+
+        // 7.1) we go onto the other chain
+
+        // 7.2) we get the initial balance on the remote chain (BEFORE the bridge)
+        uint256 remoteTokenBalanceBeforeBridging = remoteToken.balanceOf(USER);
+
+        vm.selectFork(remoteFork);
+        vm.warp(block.timestamp + 20 minutes); // we warp the time by, e.g., 20 minutes, as it normally takes some time for the message to be propagated cross-chain
+        vm.roll(block.number + 1); // we also roll the block number forward by 1 - otherwise the message won't be found
+
+        // 7.3) now we get the message cross-chain, so that we can get the balance AFTER the cross-chain message
+        // N.B: switchChainAndRouteMessage() will i) SWITCH to the remoteFork (but we already did it above, even it's redundant, to simulate the passage of time on the remote chain), ii) find the message by its ID, and iii) route it to the correct Token Pool contract on the remote chain
+        ccipLocalSimulatorFork.switchChainAndRouteMessage(remoteFork);
+
+        uint256 remoteTokenBalanceAfterBridging = remoteToken.balanceOf(USER);
+
+        // 7.4) ... and we verify that's correctly increased by amountToBridge
+        assertEq(
+            remoteTokenBalanceAfterBridging,
+            remoteTokenBalanceBeforeBridging + amountToBridge
+        );
+
+        // 7.5) we get the INTEREST RATE of the user on the REMOTE chain AFTER the transfer, as we'll verify then that's the SAME as the interest rate on the LOCAL chain before the transfer
+
+        uint256 userInterestRateOnRemoteChain = RebaseToken(remoteToken)
+            .getUserInterestRate(USER);
+
+        // 7.6) Now we verify that the interest rate of the user on the remote chain, AFTER having bridged, is the SAME as the interest rate of the user on the source/local chain
+
+        assertEq(userInterestRateOnRemoteChain, userInterestRateOnLocalChain);
     }
 }

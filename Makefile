@@ -6,6 +6,9 @@
 build:
 	forge build
 
+build-via-ir:
+	forge build --via-ir
+
 install: 
 	forge install
 
