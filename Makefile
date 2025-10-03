@@ -3,6 +3,9 @@
 .PHONY: 
 	all build test
 
+build:
+	forge build
+
 install: 
 	forge install
 

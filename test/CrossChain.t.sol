@@ -13,6 +13,9 @@ import {TokenAdminRegistry} from "@ccip/contracts/src/v0.8/ccip/tokenAdminRegist
 
 import {CCIPLocalSimulatorFork} from "../lib/chainlink-local/src/ccip/CCIPLocalSimulatorFork.sol";
 
+import {TokenPool} from "@ccip/contracts/src/v0.8/ccip/pools/TokenPool.sol";
+import {RateLimiter} from "lib/ccip/contracts/src/v0.8/ccip/libraries/RateLimiter.sol";
+
 contract CrossChainTest is Test {
     address OWNER = makeAddr("OWNER");
 
@@ -160,6 +163,78 @@ contract CrossChainTest is Test {
             address(arbSepoliaRebaseTokenPool)
         );
 
+        /*//////////////////////////////////////////////////////////////
+                        CONFIGURING THE TOKEN POOLS
+        //////////////////////////////////////////////////////////////*/
+
+        // 3) AFTER we DEPLOYED ALL OF THEM, we need to configure BOTH Token Pools by calling the applyChainUpdates() function (which is inside the TokenPool, which we are inheriting by the RebaseTokenPool) and thus setting cross-chain transfers parameters such as: pool rate limits and enabled destionation chains -> we'll actually use the configureTokenPool() helper function below to do that.
+
+        configureTokenPool(
+            sepoliaFork,
+            address(sepoliaRebaseTokenPool),
+            ccipLocalSimulatorFork
+                .getNetworkDetails(arbSepoliaFork)
+                .chainSelector,
+            address(arbSepoliaRebaseTokenPool),
+            address(arbSepoliaRebaseToken)
+        );
+
+        configureTokenPool(
+            arbSepoliaFork,
+            address(arbSepoliaRebaseTokenPool),
+            ccipLocalSimulatorFork.getNetworkDetails(sepoliaFork).chainSelector,
+            address(sepoliaRebaseTokenPool),
+            address(sepoliaRebaseToken)
+        );
+
         vm.stopPrank();
+    }
+
+    function configureTokenPool(
+        uint256 fork,
+        address localPool,
+        uint64 remoteChainSelector,
+        address remotePool,
+        address remoteToken
+    ) public {
+        // we're making sure we're working on the correct local fork - whether it's Sepolia or Arbitrum Sepolia t—hat we're working on
+        vm.selectFork(fork);
+
+        // this is goona be an array of 1 element of TokenPool.ChainUpdate structs - because we can update multiple chains at once - but in our case we're just updating one chain at a time - either sepolia or arbitrum sepolia - depending on which fork we're working on
+        TokenPool.ChainUpdate[]
+            memory chainsToAdd = new TokenPool.ChainUpdate[](1);
+
+        bytes memory remotePoolAddress = abi.encode(remotePool);
+        bytes memory remoteTokenAddress = abi.encode(remoteToken);
+
+        //         struct ChainUpdate {
+        //     uint64 remoteChainSelector; // ──╮ Remote chain selector
+        //     bool allowed; // ────────────────╯ Whether the chain should be enabled
+        //     bytes remotePoolAddress; //        Address of the remote pool, ABI encoded in the case of a remote EVM chain.
+        //     bytes remoteTokenAddress; //       Address of the remote token, ABI encoded in the case of a remote EVM chain.
+        //     RateLimiter.Config outboundRateLimiterConfig; // Outbound rate limited config, meaning the rate limits for all of the onRamps for the given chain
+        //     RateLimiter.Config inboundRateLimiterConfig; // Inbound rate limited config, meaning the rate limits for all of the offRamps for the given chain
+        //   };
+
+        chainsToAdd[0] = TokenPool.ChainUpdate({
+            remoteChainSelector: remoteChainSelector,
+            allowed: true,
+            remotePoolAddress: remotePoolAddress,
+            remoteTokenAddress: remoteTokenAddress,
+            outboundRateLimiterConfig: RateLimiter.Config({
+                isEnabled: false, // we are NOT enabling the rate limiter in this demo, however in production you should ALWAYS enable it to avoid DDOS attacks
+                capacity: 0, // this is the max amount of tokens that can be sent in a single transaction
+                rate: 0 // this is the rate at which the tokens are replenished - so, e.g., 100k tokens per second
+            }),
+            inboundRateLimiterConfig: RateLimiter.Config({
+                isEnabled: false, // we are NOT enabling the rate limiter in this demo, however in production you should ALWAYS enable it to avoid DDOS attacks
+                capacity: 0, // this is the max amount of tokens that can be sent in a single transaction
+                rate: 0 // this is the rate at which the tokens are replenished
+            })
+        });
+
+        vm.prank(OWNER);
+        // here we need to pass the LOCAL Token Pool
+        TokenPool(localPool).applyChainUpdates(chainsToAdd);
     }
 }
