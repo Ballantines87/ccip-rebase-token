@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {RebaseToken} from "../src/RebaseToken.sol";
 import {RebaseTokenPool} from "../src/RebaseTokenPool.sol";
 import {Vault} from "../src/Vault.sol";
-import {IRebaseToken} from "../src/interfaces/IRebaseToken.sol";
 import {IERC20} from "@ccip/contracts/src/v0.8/vendor/openzeppelin-solidity/v4.8.3/contracts/token/ERC20/IERC20.sol";
 import {RegistryModuleOwnerCustom} from "@ccip/contracts/src/v0.8/ccip/tokenAdminRegistry/RegistryModuleOwnerCustom.sol";
 
@@ -18,17 +17,23 @@ import {TokenPool} from "@ccip/contracts/src/v0.8/ccip/pools/TokenPool.sol";
 import {RateLimiter} from "@ccip/contracts/src/v0.8/ccip/libraries/RateLimiter.sol";
 import {Client} from "@ccip/contracts/src/v0.8/ccip/libraries/Client.sol";
 
+// N.B. for some reason the router interface is called IRouterClient and not simply IRouter
 import {IRouterClient} from "@ccip/contracts/src/v0.8/ccip/interfaces/IRouterClient.sol";
 
 contract CrossChainTest is Test {
     address OWNER = makeAddr("OWNER");
     address USER = makeAddr("USER");
 
+    uint256 constant SEND_VALUE = 1e5;
+
     RebaseToken sepoliaRebaseToken;
     RebaseToken arbSepoliaRebaseToken;
 
     RebaseTokenPool sepoliaRebaseTokenPool;
     RebaseTokenPool arbSepoliaRebaseTokenPool;
+
+    Register.NetworkDetails sepoliaNetworkDetails;
+    Register.NetworkDetails arbSepoliaNetworkDetails;
 
     // notice that the vault is deployed only on the source chain - sepolia
     // whereas the token contracts and the tokenPools contracts are deployed on both the source and the destination chains
@@ -61,6 +66,10 @@ contract CrossChainTest is Test {
         // so this will allow us to use this ccipLocalSimulatorFork address on BOTH chains - sepolia and abr_sepolia.
         vm.makePersistent(address(ccipLocalSimulatorFork));
 
+        sepoliaNetworkDetails = ccipLocalSimulatorFork.getNetworkDetails(
+            block.chainid
+        );
+
         /*//////////////////////////////////////////////////////////////
                                 SEPOLIA CONFIG
         //////////////////////////////////////////////////////////////*/
@@ -72,13 +81,12 @@ contract CrossChainTest is Test {
         // 1) deploy and configure on sepolia
         vm.startPrank(OWNER);
         sepoliaRebaseToken = new RebaseToken();
+
         sepoliaRebaseTokenPool = new RebaseTokenPool(
             IERC20(address(sepoliaRebaseToken)),
             new address[](0),
-            ccipLocalSimulatorFork
-                .getNetworkDetails(sepoliaFork)
-                .rmnProxyAddress,
-            ccipLocalSimulatorFork.getNetworkDetails(sepoliaFork).routerAddress
+            sepoliaNetworkDetails.rmnProxyAddress,
+            sepoliaNetworkDetails.routerAddress
         );
 
         vaultOnSepolia = new Vault(sepoliaRebaseToken);
@@ -91,8 +99,7 @@ contract CrossChainTest is Test {
 
         // 1.2) we claim and accept the admin role by calling the RegistryModuleOwnerCustom to register our EOA as the token admin, which is reequired to enable our token for cross-chain transfers, by calling the registerAdminViaOwner() function on the RegistryModuleOwnerCustom contract
 
-        address sepoliaRegistryModuleOwnerCustomAddress = ccipLocalSimulatorFork
-            .getNetworkDetails(sepoliaFork)
+        address sepoliaRegistryModuleOwnerCustomAddress = sepoliaNetworkDetails
             .registryModuleOwnerCustomAddress;
 
         RegistryModuleOwnerCustom(sepoliaRegistryModuleOwnerCustomAddress)
@@ -100,8 +107,7 @@ contract CrossChainTest is Test {
 
         // 1.3) now once claimed we call the TokenAdminRegistry contract's acceptAdminRole() function to finalize the registration process on sepolia
 
-        address sepoliaTokenAdminRegistryAddress = ccipLocalSimulatorFork
-            .getNetworkDetails(sepoliaFork)
+        address sepoliaTokenAdminRegistryAddress = sepoliaNetworkDetails
             .tokenAdminRegistryAddress;
 
         TokenAdminRegistry(sepoliaTokenAdminRegistryAddress).acceptAdminRole(
@@ -126,16 +132,15 @@ contract CrossChainTest is Test {
 
         // 2) deploy and configure on arbitrum sepolia
         vm.startPrank(OWNER);
+        arbSepoliaNetworkDetails = ccipLocalSimulatorFork.getNetworkDetails(
+            block.chainid
+        );
         arbSepoliaRebaseToken = new RebaseToken();
         arbSepoliaRebaseTokenPool = new RebaseTokenPool(
             IERC20(address(arbSepoliaRebaseToken)),
             new address[](0),
-            ccipLocalSimulatorFork
-                .getNetworkDetails(arbSepoliaFork)
-                .rmnProxyAddress,
-            ccipLocalSimulatorFork
-                .getNetworkDetails(arbSepoliaFork)
-                .routerAddress
+            arbSepoliaNetworkDetails.rmnProxyAddress,
+            arbSepoliaNetworkDetails.routerAddress
         );
 
         // 2.1) we need to grant the mint and burn role to the arbSepoliaRebaseTokenPool contract so that it can mint and burn tokens
@@ -144,8 +149,7 @@ contract CrossChainTest is Test {
         );
 
         // 2.2) we claim and accept the admin role by calling the RegistryModuleOwnerCustom to register our EOA as the token admin, which is reequired to enable our token for cross-chain transfers, by calling the registerAdminViaOwner() function on the RegistryModuleOwnerCustom contract
-        address arbRegistryModuleOwnerCustomAddress = ccipLocalSimulatorFork
-            .getNetworkDetails(arbSepoliaFork)
+        address arbRegistryModuleOwnerCustomAddress = arbSepoliaNetworkDetails
             .registryModuleOwnerCustomAddress;
 
         RegistryModuleOwnerCustom(arbRegistryModuleOwnerCustomAddress)
@@ -153,8 +157,7 @@ contract CrossChainTest is Test {
 
         // 2.3) now once claimed we call the TokenAdminRegistry contract's acceptAdminRole() function to finalize the registration process on arb sepolia
 
-        address arbSepoliaTokenAdminRegistryAddress = ccipLocalSimulatorFork
-            .getNetworkDetails(arbSepoliaFork)
+        address arbSepoliaTokenAdminRegistryAddress = arbSepoliaNetworkDetails
             .tokenAdminRegistryAddress;
 
         TokenAdminRegistry(arbSepoliaTokenAdminRegistryAddress).acceptAdminRole(
@@ -168,6 +171,8 @@ contract CrossChainTest is Test {
             address(arbSepoliaRebaseTokenPool)
         );
 
+        vm.stopPrank();
+
         /*//////////////////////////////////////////////////////////////
                         CONFIGURING THE TOKEN POOLS
         //////////////////////////////////////////////////////////////*/
@@ -177,9 +182,7 @@ contract CrossChainTest is Test {
         configureTokenPool(
             sepoliaFork,
             address(sepoliaRebaseTokenPool),
-            ccipLocalSimulatorFork
-                .getNetworkDetails(arbSepoliaFork)
-                .chainSelector,
+            arbSepoliaNetworkDetails.chainSelector,
             address(arbSepoliaRebaseTokenPool),
             address(arbSepoliaRebaseToken)
         );
@@ -187,12 +190,10 @@ contract CrossChainTest is Test {
         configureTokenPool(
             arbSepoliaFork,
             address(arbSepoliaRebaseTokenPool),
-            ccipLocalSimulatorFork.getNetworkDetails(sepoliaFork).chainSelector,
+            sepoliaNetworkDetails.chainSelector,
             address(sepoliaRebaseTokenPool),
             address(sepoliaRebaseToken)
         );
-
-        vm.stopPrank();
     }
 
     // Helper function to configure the token pools on both chains
@@ -272,10 +273,12 @@ contract CrossChainTest is Test {
             data: "", // we're not sending any extra data with this cross-chain transfer in this demo
             tokenAmounts: tokenAmounts, // the array of tokens and their amounts that we're sending cross-chain
             feeToken: localNetworkDetails.linkAddress, // we want to pay this in LINK tokens -> so we're going to use localNetworkDetails.linkAddress to get the LINK address
-            extraArgs: Client._argsToBytes(Client.EVMExtraArgsV1({gasLimit: 0})) // Populate this extraArgs with _argsToBytes(EVMExtraArgsV1)
+            extraArgs: Client._argsToBytes(
+                Client.EVMExtraArgsV1({gasLimit: 600_000})
+            ) // Populate this extraArgs with _argsToBytes(EVMExtraArgsV1)
         });
 
-        // 3) now we can GET the FEES -> so we need to call the router contract -> we can get it from the localNetworkDetails.routerAddress -> but then we need to cast it to the correct interface - which is IRouterClient - so that we can call the getFee() function on it
+        // 3) now we can GET the FEES from the Router -> so we need to call the router contract -> we can get it from the localNetworkDetails.routerAddress -> but then we need to cast it to the correct interface - which is IRouterClient - so that we can call the getFee() function on it
 
         IRouterClient router = IRouterClient(localNetworkDetails.routerAddress);
 
@@ -292,21 +295,19 @@ contract CrossChainTest is Test {
             revert("Failed to get LINK tokens from the faucet");
         }
 
-        // 4) we need (as the USER) to approve the router address to be able to spend the user's LINK tokens - so that it can pay for the fees
-        vm.prank(USER);
+        vm.startPrank(USER);
+
+        // 4) USER approves LINK for router to pay CCIP fees
         IERC20(localNetworkDetails.linkAddress).approve(
             localNetworkDetails.routerAddress,
             fee
         );
 
-        // 5) we need (as the USER) to approve the router address to be able to spend the localTokens - so that it can pull the amountToBridge of tokens from the user
-
-        vm.prank(USER);
+        // 5) USER approves RebaseToken for its associated pool - Approve the router to burn tokens on users behalf
         IERC20(address(localToken)).approve(
             localNetworkDetails.routerAddress,
             amountToBridge
         );
-
         // 6) now we can send the tokens cross-chain by calling the ccipSend() function on the router
 
         // BUT we also wanna make sure that all of the state is as expected -> so we want to i) get some balances and ii) do some assertions
@@ -316,11 +317,12 @@ contract CrossChainTest is Test {
 
         // 6.2) ... and then we send (as the USER) the message cross-chain by calling the ccipSend() function on the router ..
 
-        vm.prank(USER);
-        bytes32 messageId = router.ccipSend{value: fee}(
+        IRouterClient(localNetworkDetails.routerAddress).ccipSend(
             remoteNetworkDetails.chainSelector, // The destination chain ID
             message // The cross-chain CCIP message including data and/or tokens
         );
+
+        vm.stopPrank();
 
         // 6.3) And we want to get the balance AFTER ...
         uint256 localTokenBalanceAfterBridging = localToken.balanceOf(USER);
@@ -348,6 +350,8 @@ contract CrossChainTest is Test {
 
         // 7.3) now we get the message cross-chain, so that we can get the balance AFTER the cross-chain message
         // N.B: switchChainAndRouteMessage() will i) SWITCH to the remoteFork (but we already did it above, even it's redundant, to simulate the passage of time on the remote chain), ii) find the message by its ID, and iii) route it to the correct Token Pool contract on the remote chain
+
+        vm.selectFork(localFork); // we need to select the local fork again to be able to get the message ID from the local router
         ccipLocalSimulatorFork.switchChainAndRouteMessage(remoteFork);
 
         uint256 remoteTokenBalanceAfterBridging = remoteToken.balanceOf(USER);
@@ -366,5 +370,45 @@ contract CrossChainTest is Test {
         // 7.6) Now we verify that the interest rate of the user on the remote chain, AFTER having bridged, is the SAME as the interest rate of the user on the source/local chain
 
         assertEq(userInterestRateOnRemoteChain, userInterestRateOnLocalChain);
+    }
+
+    function testBridgeAllTokens() public {
+        // we select the fork we wanna be working on
+        vm.selectFork(sepoliaFork);
+
+        // we need to deposit to the vault
+        vm.deal(USER, SEND_VALUE);
+        vm.prank(USER);
+
+        // we need to make sure the vault address is payable, hence the chain of casts -> address to be able to cast it to payable -> but then casted back to Vault so that we can call the deposit() function on it
+        Vault(payable(address(vaultOnSepolia))).deposit{value: SEND_VALUE}();
+
+        assertEq(sepoliaRebaseToken.balanceOf(USER), SEND_VALUE);
+
+        // we bridge all of our tokens to arbitrum sepolia from sepolia
+        bridgeTokens(
+            SEND_VALUE,
+            sepoliaFork,
+            arbSepoliaFork,
+            sepoliaNetworkDetails,
+            arbSepoliaNetworkDetails,
+            sepoliaRebaseToken,
+            arbSepoliaRebaseToken
+        );
+
+        // let's make sure we can bridge all of our tokens back to sepolia from arbitrum sepolia
+        vm.selectFork(arbSepoliaFork); // this is to say that we're working on the arbitrum sepolia fork now
+        vm.warp(block.timestamp + 20 minutes);
+        vm.roll(1);
+
+        bridgeTokens(
+            arbSepoliaRebaseToken.balanceOf(USER), // interests have accrued, so we bridge the entire balance
+            arbSepoliaFork,
+            sepoliaFork,
+            arbSepoliaNetworkDetails,
+            sepoliaNetworkDetails,
+            arbSepoliaRebaseToken,
+            sepoliaRebaseToken
+        );
     }
 }

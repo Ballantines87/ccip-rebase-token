@@ -195,20 +195,19 @@ contract RebaseToken is ERC20, Ownable, AccessControl, IRebaseToken {
         address _recipient,
         uint256 _amount
     ) public override returns (bool) {
-        _mintAccruedInterests(_sender);
-        _mintAccruedInterests(_recipient);
-
         if (_amount == type(uint256).max) {
             _amount = balanceOf(_sender);
         }
-
-        if (s_userTouserInterestRate[_recipient] == 0) {
+        // accumulates the balance of the user so it is up to date with any interest accumulated.
+        _mintAccruedInterests(_sender);
+        _mintAccruedInterests(_recipient);
+        if (balanceOf(_recipient) == 0) {
+            // Update the users interest rate only if they have not yet got one (or they tranferred/burned all their tokens). Otherwise people could force others to have lower interest.
             s_userTouserInterestRate[_recipient] = s_userTouserInterestRate[
                 _sender
             ];
         }
-
-        return super.transferFrom(_recipient, _sender, _amount);
+        return super.transferFrom(_sender, _recipient, _amount);
     }
 
     /*//////////////////////////////////////////////////////////////

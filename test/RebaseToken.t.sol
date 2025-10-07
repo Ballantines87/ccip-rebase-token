@@ -4,7 +4,6 @@ pragma solidity ^0.8.24;
 import {Test, console} from "forge-std/Test.sol";
 import {RebaseToken} from "../src/RebaseToken.sol";
 import {Vault} from "../src/Vault.sol";
-import {IRebaseToken} from "../src/interfaces/IRebaseToken.sol";
 import {Ownable} from "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {IAccessControl} from "../lib/openzeppelin-contracts/contracts/access/IAccessControl.sol";
 
@@ -31,6 +30,10 @@ contract RebaseTokenTest is Test {
         (bool success, ) = payable(address(vault)).call{value: rewardsAmount}(
             ""
         ); // 1 ether == 1e18
+
+        if (!success) {
+            revert();
+        }
     }
 
     // n.b. notice that "amount" is fuzzed
@@ -146,7 +149,10 @@ contract RebaseTokenTest is Test {
 
         // 2. transfer
         vm.prank(USER);
-        rebaseToken.transfer(recipient, amountToSend);
+        bool successfulTransfer = rebaseToken.transfer(recipient, amountToSend);
+        if (!successfulTransfer) {
+            revert("Unsuccessful transfer");
+        }
 
         uint256 userFinalBalance = rebaseToken.balanceOf(USER);
         uint256 recipientFinalBalance = rebaseToken.balanceOf(recipient);
